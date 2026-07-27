@@ -7,5 +7,3 @@ The Browser's installation File is in the releases.
 SimpleBrowser is guaranteed to work on an Intel Mac.
 
 SimpleBrowser is Open Source.
-
-SimpleBrowser is made with Python.
