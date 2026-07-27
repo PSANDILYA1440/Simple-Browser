@@ -5,9 +5,11 @@ from urllib.parse import quote_plus
 
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QFont
+from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QHBoxLayout,
@@ -25,13 +27,13 @@ SETTINGS_FILE = Path(__file__).with_name(".simple_browser_settings.json")
 
 
 class SettingsDialog(QDialog):
-    """Settings dialog for search engine, language, and quitting."""
+    """Settings dialog for search engine, language, account saving, and quitting."""
 
     def __init__(self, parent):
         super().__init__(parent)
         self.browser = parent
         self.setWindowTitle("Settings")
-        self.setGeometry(100, 100, 380, 280)
+        self.setGeometry(100, 100, 380, 320)
 
         layout = QVBoxLayout()
 
@@ -61,6 +63,10 @@ class SettingsDialog(QDialog):
         )
         layout.addWidget(self.language_preview)
 
+        self.save_accounts_checkbox = QCheckBox("Save signed-in accounts across restarts")
+        self.save_accounts_checkbox.setChecked(self.browser.save_account_data)
+        layout.addWidget(self.save_accounts_checkbox)
+
         save_btn = QPushButton("Save Settings")
         save_btn.clicked.connect(self.save_settings)
         layout.addWidget(save_btn)
@@ -76,7 +82,7 @@ class SettingsDialog(QDialog):
         self.language_preview.setText(f"Current language: {selected_name}")
 
     def save_settings(self):
-        """Save the selected search engine and language."""
+        """Save the selected search engine, language, and account preference."""
         search_engine_name = self.search_combo.currentText().lower()
         self.browser.default_search_engine = {
             "google": "google",
@@ -89,13 +95,16 @@ class SettingsDialog(QDialog):
             selected_language_name, "en"
         )
 
+        self.browser.save_account_data = self.save_accounts_checkbox.isChecked()
+        self.browser.update_cookie_policy()
         self.browser.save_settings()
 
         QMessageBox.information(
             self,
             "Settings",
             f"Default search engine set to {self.search_combo.currentText()}.\n"
-            f"Default language set to {selected_language_name}.",
+            f"Default language set to {selected_language_name}.\n"
+            f"Save signed-in accounts: {'Yes' if self.browser.save_account_data else 'No'}.",
         )
         self.accept()
 
@@ -123,6 +132,8 @@ class SimpleBrowser(QMainWindow):
 
         self.default_search_engine = "google"
         self.default_language = "en"
+        self.save_account_data = False
+        self.account_prompted_domains = set()
 
         self.search_engines = {
             "google": "https://www.google.com/search?q=",
@@ -145,6 +156,14 @@ class SimpleBrowser(QMainWindow):
 
         self.language_code_map = {name: code for name, code in self.language_options}
         self.load_settings()
+
+        self.profile = QWebEngineProfile("SimpleBrowserProfile", self)
+        storage_path = Path(__file__).with_name("browser_profile")
+        storage_path.mkdir(exist_ok=True)
+        self.profile.setPersistentStoragePath(str(storage_path))
+        self.profile.setCachePath(str(storage_path / "cache"))
+        self.update_cookie_policy()
+        self.profile.cookieStore().cookieAdded.connect(self._on_cookie_added)
 
         self.setWindowTitle("Simple Browser")
         self.setGeometry(100, 100, 1200, 800)
@@ -176,7 +195,7 @@ class SimpleBrowser(QMainWindow):
 
         self.url_bar = QLineEdit()
         self.url_bar.setPlaceholderText("Enter URL or search...")
-        self.url_bar.setFont(QFont("Josefin Sans", 26))
+        self.url_bar.setFont(QFont("Josefin Sans", 30))
         self.url_bar.setMinimumHeight(48)
         self.url_bar.setFixedHeight(48)
         self.url_bar.returnPressed.connect(self.navigate_to_url)
@@ -217,8 +236,19 @@ class SimpleBrowser(QMainWindow):
 
         self.new_tab()
 
+    def update_cookie_policy(self):
+        """Set cookie persistence based on account-saving preferences."""
+        if self.save_account_data:
+            self.profile.setPersistentCookiesPolicy(
+                QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
+            )
+        else:
+            self.profile.setPersistentCookiesPolicy(
+                QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies
+            )
+
     def load_settings(self):
-        """Load saved search engine and language settings."""
+        """Load saved search engine, language, and account settings."""
         if not SETTINGS_FILE.exists():
             return
 
@@ -237,11 +267,14 @@ class SimpleBrowser(QMainWindow):
             if saved_language in {code for _, code in self.language_options}:
                 self.default_language = saved_language
 
+            self.save_account_data = data.get("save_account_data", False)
+
     def save_settings(self):
-        """Persist search engine and language settings."""
+        """Persist search engine, language, and account settings."""
         data = {
             "default_search_engine": self.default_search_engine,
             "default_language": self.default_language,
+            "save_account_data": self.save_account_data,
         }
         with SETTINGS_FILE.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -264,6 +297,7 @@ class SimpleBrowser(QMainWindow):
     def _create_web_view(self):
         """Create a web view for a new tab."""
         web_view = QWebEngineView()
+        web_view.setPage(QWebEnginePage(self.profile, web_view))
         web_view.page().fullScreenRequested.connect(self.handle_fullscreen_request)
         web_view.urlChanged.connect(self.update_url_bar)
         web_view.loadFinished.connect(lambda _ok=None: self.update_navigation_buttons())
@@ -337,13 +371,11 @@ class SimpleBrowser(QMainWindow):
         text = text.strip()
         if not text:
             return False
-        if "://" in text:
+        if text.startswith(("http://", "https://")):
             return True
-        if text.startswith("www.") or text.startswith("localhost"):
-            return True
-        if "." in text and " " not in text:
-            return True
-        return False
+        if " " in text:
+            return False
+        return "." in text
 
     def _normalize_url(self, text):
         """Normalize user-entered URLs."""
@@ -351,6 +383,62 @@ class SimpleBrowser(QMainWindow):
         if text.startswith(("http://", "https://", "ftp://")):
             return text
         return f"https://{text}"
+
+    def _is_login_cookie(self, cookie):
+        """Return True if a cookie looks like a sign-in/account cookie."""
+        name = bytes(cookie.name()).decode("utf-8", errors="ignore").lower()
+        if not name:
+            return False
+
+        keywords = [
+            "session",
+            "auth",
+            "token",
+            "login",
+            "sid",
+            "sessid",
+            "remember",
+            "userid",
+            "user",
+            "oauth",
+            "credential",
+        ]
+        return any(keyword in name for keyword in keywords)
+
+    def _on_cookie_added(self, cookie):
+        """Prompt the user when a login/account cookie is created."""
+        if self.save_account_data:
+            return
+
+        domain = cookie.domain().lstrip(".")
+        if domain in self.account_prompted_domains:
+            return
+
+        if not self._is_login_cookie(cookie):
+            return
+
+        self.account_prompted_domains.add(domain)
+        self._ask_save_account_data(domain)
+
+    def _ask_save_account_data(self, domain):
+        """Ask whether account cookies should be saved across restarts."""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Save signed-in accounts?")
+        msg.setText(
+            f"It looks like you signed in to {domain}. "
+            "Do you want this browser to save your account data so you stay signed in after restart?"
+        )
+        msg.setIcon(QMessageBox.Icon.Question)
+
+        save_button = msg.addButton(
+            "Save Account Data", QMessageBox.ButtonRole.AcceptRole
+        )
+        msg.addButton("Don't Save", QMessageBox.ButtonRole.RejectRole)
+        msg.exec()
+
+        self.save_account_data = msg.clickedButton() == save_button
+        self.update_cookie_policy()
+        self.save_settings()
 
     def _show_http_warning(self):
         """Show a warning dialog for insecure HTTP URLs."""
@@ -402,8 +490,8 @@ class SimpleBrowser(QMainWindow):
 
     def open_settings(self):
         """Open the settings dialog."""
-        dialog = SettingsDialog(self)
-        dialog.exec()
+        settings_dialog = SettingsDialog(self)
+        settings_dialog.exec()
 
     def handle_fullscreen_request(self, request):
         """Handle fullscreen requests from web pages."""
@@ -411,7 +499,7 @@ class SimpleBrowser(QMainWindow):
 
 
 def main():
-    """Main entry point for the application."""
+    """Main application entry point."""
     app = QApplication(sys.argv)
     browser = SimpleBrowser()
     browser.show()
