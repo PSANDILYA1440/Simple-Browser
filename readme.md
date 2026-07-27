@@ -1,3 +1,5 @@
+![dhjkfn](https://github.com/user-attachments/assets/220a0ad5-ba78-4183-9325-d4e064a458b9)
+
 https://sites.google.com/view/simple-browser-website/home
 
 Simple browser is a browser only compatible with MacOS if you download it from Windows then it won't be usable!
