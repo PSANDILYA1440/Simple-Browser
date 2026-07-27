@@ -1,0 +1,3 @@
+/Users/paarth/An open source browser/build/CMakeFiles/gecko_browser.dir
+/Users/paarth/An open source browser/build/CMakeFiles/edit_cache.dir
+/Users/paarth/An open source browser/build/CMakeFiles/rebuild_cache.dir
