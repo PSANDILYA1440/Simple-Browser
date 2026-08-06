@@ -1,3 +1,7 @@
+![LOGO](https://github.com/user-attachments/assets/01232660-ad75-4639-b548-f7fe21056768)
+
+
+
 https://sites.google.com/view/simple-browser-website/home
 
 if you get a popup saying "SimpleBrowser" can't be opened because the identity of the developer cannot be confirmed. 
